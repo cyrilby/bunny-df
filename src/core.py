@@ -2,7 +2,18 @@
 
 import os
 import requests
-from dotenv import load_dotenv  # noqa
+import tempfile
+import pandas as pd
+import numpy as np
+from pathlib import Path
+from dotenv import load_dotenv
+from typing import get_args, Literal
+
+
+# %% Defining supported extensions
+
+# Extensions for pandas data frames
+DataFrameExt = Literal["csv", "xlsx", "parquet"]
 
 
 # %% Function to load credentials from .ENV file
@@ -33,6 +44,7 @@ def load_credentials(
     """
 
     # Reading credentials from .ENV file
+    _ = load_dotenv()
     zone = os.getenv(zone_name)
     p_read = os.getenv(password_read) if password_read else None
     p_write = os.getenv(password_write) if password_write else None
@@ -57,7 +69,7 @@ def load_credentials(
     return credentials
 
 
-# %% Function to download a file
+# %% Function to download a file from Bunny.net
 
 
 def download_file(
@@ -89,7 +101,7 @@ def download_file(
         print(f"Successfully downloaded: '{local_destination_path}'.")
 
 
-# %% Function to upload a file
+# %% Function to upload a file to Bunny.net
 
 
 def upload_file(
@@ -150,12 +162,10 @@ def upload_file(
 
     # Printing an optional confirmation
     if print_status:
-        print(
-            f"Successfully uploaded '{local_file_path}' to '{storage_zone}' (HTTP 201)."
-        )
+        print(f"Successfully uploaded to '{remote_file_path}'.")
 
 
-# %% Function to delete a remote file
+# %% Function to delete a remote file stored on Bunny.net
 
 
 def delete_file(
@@ -184,6 +194,183 @@ def delete_file(
             )
         else:
             print(response.text + f" (HTTP Code: {response.status_code})")
+
+
+# %% Function to write a df to a local temp file
+
+
+def write_tmp_df(df: pd.DataFrame, format: DataFrameExt, **kwargs) -> str:
+    """
+    Writes a pandas df to a local temporary file as step 1
+    of writing a df to Bunny.net storage.
+
+    Args:
+        df (pd.DataFrame): pandas df to write
+        format (DataFrameExt): file format for the df
+
+    Returns:
+        str: local file path
+    """
+
+    # Notes: delete=False ensures the file stays on disk after
+    # we close it. The suffix helps the OS and other apps
+    # with recognizing the file type.
+    with tempfile.NamedTemporaryFile(delete=False, suffix=f".{format}") as tmp:
+        temp_path = tmp.name
+
+        if format == "csv":
+            df.to_csv(temp_path, **kwargs)
+        elif format == "parquet":
+            df.to_parquet(temp_path, **kwargs)
+
+    return temp_path
+
+
+# %% Function to read a df from a local (temp) file
+
+
+def read_tmp_df(local_file_path: str, **kwargs) -> pd.DataFrame:
+    """
+    Reads a pandas df from a local (temporary) file as step 1
+    of reading a df from Bunny.net storage.
+
+    Args:
+        local_file_path (str): path to a local file where
+        a data frame-compatible file is stored
+
+    Returns:
+        pd.DataFrame: pandas df ready for use
+    """
+
+    # Detecting the file format from the extension
+    format = Path(local_file_path).suffix.lower().lstrip(".")
+
+    # Reading a df using standard pandas
+    if format == "csv":
+        df = pd.read_csv(local_file_path, **kwargs)
+    elif format == "parquet":
+        df = pd.read_parquet(local_file_path, **kwargs)
+
+    return df
+
+
+# %% Function to delete a local (temp) file
+
+
+def delete_local_file(local_file: str) -> None:
+    """
+    Deletes a local file. Useful to do this clean-up
+    after a local temp file containing a pandas df
+    has been uploaded to Bunny.net.
+
+    Args:
+        local_file (str): path to the local file to be
+        deleted. Typically, this should be the output of
+        the write_tmp_file() function.
+    """
+    if os.path.exists(local_file):
+        os.remove(local_file)
+
+
+# %% Function to write a df to Bunny.net
+
+
+def write_bunny_df(
+    df: pd.DataFrame,
+    remote_file_path: str,
+    storage_zone: str,
+    password_write: str,
+    region: str = "",
+    print_status: bool = True,
+    **kwargs,
+):
+
+    # Detecting the file format from the extension
+    format = Path(remote_file_path).suffix.lower().lstrip(".")
+
+    # Validating the chosen format
+    if format not in get_args(DataFrameExt):
+        raise ValueError(
+            f"Unsupported file extension '{format}'. Must be one of {get_args(DataFrameExt)}"
+        )
+
+    # Writing the sample df to a local temp file
+    local_file_path = write_tmp_df(df, format)
+
+    # Uploading the local file to Bunny.net storage
+    upload_file(
+        local_file_path,
+        remote_file_path,
+        storage_zone,
+        password_write,
+        region,
+        print_status=False,
+        **kwargs,
+    )
+
+    # Deleting the local temp file
+    delete_local_file(local_file_path)
+
+    # Confirming that writing the df was successful
+    print(
+        f"Data frame successfully written to Bunny.net: '{storage_zone}/{remote_file_path}'."
+    )
+
+
+# %% Function to read a df from Bunny.net
+
+
+def read_bunny_df(
+    remote_file_path: str,
+    storage_zone: str,
+    password_read: str,
+    print_status: bool = True,
+    **kwargs,
+) -> pd.DataFrame:
+
+    # Getting the file extension from remote
+    format = Path(remote_file_path).suffix
+    format_clean = format.lstrip(".")
+
+    # Confirming that the file extension is supported
+    if format_clean not in get_args(DataFrameExt):
+        raise ValueError(
+            f"Unsupported file extension '{format}'. Must be one of {get_args(DataFrameExt)}"
+        )
+
+    # Creating a temporary file for the download
+    tmp = tempfile.NamedTemporaryFile(delete=False, suffix=format)
+    local_file_path = tmp.name
+
+    try:
+        # Closing the file handle immediately; some downloaders
+        # prefer to open the path themselves.
+        tmp.close()
+
+        # Downloading the actual file from Bunny.net
+        download_file(
+            remote_file_path,
+            local_file_path,
+            storage_zone,
+            password_read,
+            print_status=False,
+        )
+
+        # Importing data from the local file
+        df = read_tmp_df(local_file_path)
+
+        if print_status:
+            print(
+                f"Data frame successfully loaded from Bunny.net: '{storage_zone}/{remote_file_path}'."
+            )
+
+        return df
+
+    finally:
+        # Cleaning up: the below code guaranttes that even if
+        # the download or the read fails, deletion will happen
+        if os.path.exists(local_file_path):
+            os.remove(local_file_path)
 
 
 # %% Examples
@@ -218,6 +405,15 @@ if __name__ == "__main__":
         bunny["password_write"],
         print_status=True,
     )
+
+    # Creating a sample df
+    df = pd.DataFrame(np.random.randint(0, 100, size=(10000, 3)), columns=list("ABC"))
+
+    # Writing the sample df to Bunny.net
+    write_bunny_df(df, "test_df.csv", bunny["zone_name"], bunny["password_write"])
+
+    # Reading a df from Bunny.net
+    df_read = read_bunny_df("test_df.csv", bunny["zone_name"], bunny["password_read"])
 
 
 # %%

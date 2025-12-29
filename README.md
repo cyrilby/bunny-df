@@ -1,7 +1,7 @@
 # BunnyDF: Reading & writing data frames from Bunny.net
 
 - **Author**: github.com/cyrilby
-- **Last meaningful update**: 27-12-2025
+- **Last meaningful update**: 29-12-2025
 
 This Python package allows for easily reading and writing `pandas` data frames and other data science-related objects to Bunny.net cloud storage.
 
@@ -12,6 +12,24 @@ This Python package allows for easily reading and writing `pandas` data frames a
 - Additional packages may be needed to enable reading/writing specific file formats such as Excel, Parquet, etc. (please check the official [pandas documentation](https://pandas.pydata.org/pandas-docs/stable/reference/api/pandas.read_parquet.html) for more information)
 
 ## Functionalities
+
+### Supported file formats
+
+For reading/writing tabular data (`pandas` data frames):
+
+- CSV
+- Excel (xls, xlsx, xlsm)
+- ODS
+- Parquet
+- Feather (f, feather)
+- HDF
+- Pickle (pkl, pickle)
+
+Other formats [WIP as of 29-12-2025]:
+
+- JSON for storing dictionaries (yet to be added)
+- TXT for storing strings (yet to be added)
+- Pickle for storing any other Pythonic objects (yet to be added)
 
 ### Main functions
 
